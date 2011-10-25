@@ -196,6 +196,12 @@ int main(int argc,char*argv[])
 	
 	opts.pairedReads=hasOpt(optmap,"--paired");
 	
+	if(!opts.pairedReads){
+		cerr<<"currently we only do filtering for paired reads. please use --paired option"<<endl;
+		printUsage(argsFinal.programName);
+		return 1;
+	}
+	
 	return runFilterReads(opts);
 	
 	return 0;
