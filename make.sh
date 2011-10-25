@@ -1,0 +1,1 @@
+g++ -o FilterReads FilterReads_main.cpp AdvGetOptCpp/AdvGetOpt.cpp
