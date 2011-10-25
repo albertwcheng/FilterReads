@@ -21,6 +21,7 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <set>	
 #include <StringUtil.h>
 #include "AdvGetOptCpp/AdvGetOpt.h"
 using namespace std;
@@ -53,10 +54,13 @@ void printUsage(string programName){
 
 class FastqRecord{
 	public:
-	string line1;
-	string line2;
-	string line3;
-	string line4;
+	unsigned int line1;
+	unsigned int line2;
+	unsigned int line3;
+	unsigned int line4;
+	inline bool operator < (const FastqRecord& fqr) const{
+		return line1<fqr.line1;
+	}
 };
 
 bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& records){
@@ -64,14 +68,19 @@ bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& reco
 	ifstream fil(filename.c_str());
 	unsigned int lino=0; //store the number of line fastq content
 	unsigned int rlino=0; //store the real number of line
-	FastqRecord fqr;
+	
+	
 	string name;
+	//unsigned int firstlineseek;
 	vector<string> splits;
+	FastqRecord fqr;
 	
 	while(fil.good()){
 	
 		
 		string buffer;
+		unsigned int cseek=fil.tellg();
+		
 		getline(fil,buffer);
 		
 		rlino++;
@@ -88,15 +97,16 @@ bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& reco
 					fil.close();
 					return false;
 				}
-				fqr.line1=buffer;
+				
 				
 				StringUtil::split(buffer,"/",splits);
 				name=splits[0];
+				fqr.line1=cseek;
 				//cerr<<"name="<<name<<endl;
 				
 				break;
 			case 2:
-				fqr.line2=buffer;
+				fqr.line2=cseek;
 				break;
 			case 3:
 				if(buffer[0]!='+'){
@@ -105,10 +115,10 @@ bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& reco
 					fil.close();
 					return false;
 				}
-				fqr.line3=buffer;
+				fqr.line3=cseek;
 				break;
 			case 0:
-				fqr.line4=buffer;
+				fqr.line4=cseek;
 				records.insert(map<string, FastqRecord>::value_type(name,fqr));
 				break;
 		}
@@ -120,22 +130,53 @@ bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& reco
 
 }
 
-void outputFastqRecord(ostream &os, FastqRecord &fqr){
-	os<<fqr.line1<<endl;
-	os<<fqr.line2<<endl;
-	os<<fqr.line3<<endl;
-	os<<fqr.line4<<endl;
+void copyLines(string fileSrc,string fileDst,set<FastqRecord>&linos){
+	
+	
+	ifstream fil(fileSrc.c_str());
+	ofstream fout(fileDst.c_str());
+	
+	for(set<FastqRecord>::iterator linoI=linos.begin();linoI!=linos.end();linoI++){
+		
+		
+		
+		string buffer;
+		
+		fil.seekg(linoI->line1);
+		getline(fil,buffer);
+		fout<<buffer<<endl;
+		
+		fil.seekg(linoI->line2);
+		getline(fil,buffer);
+		fout<<buffer<<endl;	
+		
+		fil.seekg(linoI->line3);
+		getline(fil,buffer);
+		fout<<buffer<<endl;
+		
+		fil.seekg(linoI->line4);
+		getline(fil,buffer);
+		fout<<buffer<<endl;
+			
+	}
+	
+	
+	
+	fil.close();
+	fout.close();
+
+	
 }
 
 int runFilterReads( filterReads_opts &opts){
 
-	map<string, FastqRecord> file1r;
-	map<string, FastqRecord> file2r;
+	map<string, FastqRecord> file1r; //name -> seek
+	map<string, FastqRecord> file2r; //name -> seek
 	
 	unsigned int readsOut1=0;
 	unsigned int readsOut2=0;
 	
-	
+	cerr<<"First Pass"<<endl;
 	cerr<<"Reading file1 "<<opts.file1<<endl;
 	if(!readFastqIntoNameKeyedRecord(opts.file1,file1r)){
 		cerr<<"Failed. Abort"<<endl;
@@ -148,32 +189,40 @@ int runFilterReads( filterReads_opts &opts){
 		return 1;
 	}
 	cerr<<file2r.size()<<" reads read"<<endl;
-	cerr<<"Finished reading files. Start filtering"<<endl;
+	cerr<<"Finished first-passing files. Start filtering"<<endl;
 	
-	ofstream of1(opts.outfile1.c_str());
-	ofstream of2(opts.outfile2.c_str());
+	set<FastqRecord> f1linesToOutput;
+	set<FastqRecord> f2linesToOutput;
+	
 	map<string, FastqRecord>::iterator i;
-	
 	map<string, FastqRecord>::iterator j;
+	
 	
 	if(opts.pairedReads){
 		cerr<<"filter paired"<<endl;
 		for(i=file1r.begin();i!=file1r.end();i++){
 			if((j=file2r.find(i->first))!=file2r.end()){
-				outputFastqRecord(of1,i->second);
-				outputFastqRecord(of2,j->second);
+				f1linesToOutput.insert(i->second);
+				f2linesToOutput.insert(j->second);
 				readsOut1++;
 				readsOut2++;
 			}
 		}
 	}
 	
+	cerr<<"Second Pass"<<endl;
+	
+	cerr<<"Copying filtered lines from file1 to outfile1"<<endl;
+	copyLines(opts.file1,opts.outfile1,f1linesToOutput);
 	cerr<<readsOut1<<" reads output to "<<opts.outfile1<<endl;
 	
+	cerr<<"Copying filtered lines from file2 to outfile2"<<endl;
+	copyLines(opts.file2,opts.outfile2,f2linesToOutput);
 	cerr<<readsOut2<<" reads output to "<<opts.outfile2<<endl;
 	
-	of1.close();
-	of2.close();
+	cerr<<"<Done>"<<endl;
+	
+
 	
 	return 0;
 }
