@@ -23,6 +23,7 @@
 #include <fstream>
 #include <set>	
 #include <StringUtil.h>
+#include <limits>
 #include "AdvGetOptCpp/AdvGetOpt.h"
 using namespace std;
 
@@ -30,12 +31,14 @@ class filterReads_opts
 {
   public:
     bool pairedReads;
+    int minLength;
+    int trimLength;
     string file1;
     string file2;
     string outfile1;
     string outfile2;
   
-  filterReads_opts():pairedReads(false)
+  filterReads_opts():pairedReads(false),minLength(0),trimLength(0)
   {
   
   }
@@ -48,22 +51,23 @@ void printUsage(string programName){
 	
 	cerr<<"Options:"<<endl;
 	cerr<<"--paired. retain only paired reads"<<endl;
-	
+	cerr<<"--min-length x. default: 0 retain only reads that in both files have min length of x"<<endl;
+	cerr<<"--trim-to-length x. default: no trimming. trim reads from 3'end in both files to x."<<endl;
 	
 }
 
 class FastqRecord{
 	public:
-	unsigned int line1;
-	unsigned int line2;
-	unsigned int line3;
-	unsigned int line4;
+	streamoff line1;
+	streamoff line2;
+	streamoff line3;
+	streamoff line4;
 	inline bool operator < (const FastqRecord& fqr) const{
 		return line1<fqr.line1;
 	}
 };
 
-bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& records){
+bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& records,int minLength){
 	
 	ifstream fil(filename.c_str());
 	unsigned int lino=0; //store the number of line fastq content
@@ -75,11 +79,13 @@ bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& reco
 	vector<string> splits;
 	FastqRecord fqr;
 	
+	int length;
+	
 	while(fil.good()){
 	
 		
 		string buffer;
-		unsigned int cseek=fil.tellg();
+		streamoff cseek=fil.tellg();
 		
 		getline(fil,buffer);
 		
@@ -107,6 +113,7 @@ bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& reco
 				break;
 			case 2:
 				fqr.line2=cseek;
+				length=buffer.length();
 				break;
 			case 3:
 				if(buffer[0]!='+'){
@@ -119,7 +126,9 @@ bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& reco
 				break;
 			case 0:
 				fqr.line4=cseek;
-				records.insert(map<string, FastqRecord>::value_type(name,fqr));
+				if(length>=minLength){
+					records.insert(map<string, FastqRecord>::value_type(name,fqr));
+				}
 				break;
 		}
 		
@@ -130,7 +139,7 @@ bool readFastqIntoNameKeyedRecord(string filename,map<string, FastqRecord>& reco
 
 }
 
-void copyLines(string fileSrc,string fileDst,set<FastqRecord>&linos){
+void copyLines(string fileSrc,string fileDst,set<FastqRecord>&linos,int trimLength){
 	
 	
 	ifstream fil(fileSrc.c_str());
@@ -148,6 +157,9 @@ void copyLines(string fileSrc,string fileDst,set<FastqRecord>&linos){
 		
 		fil.seekg(linoI->line2);
 		getline(fil,buffer);
+		if(trimLength>0){
+			buffer.resize(trimLength);
+		}
 		fout<<buffer<<endl;	
 		
 		fil.seekg(linoI->line3);
@@ -156,6 +168,9 @@ void copyLines(string fileSrc,string fileDst,set<FastqRecord>&linos){
 		
 		fil.seekg(linoI->line4);
 		getline(fil,buffer);
+		if(trimLength>0){
+			buffer.resize(trimLength);
+		}
 		fout<<buffer<<endl;
 			
 	}
@@ -178,13 +193,13 @@ int runFilterReads( filterReads_opts &opts){
 	
 	cerr<<"First Pass"<<endl;
 	cerr<<"Reading file1 "<<opts.file1<<endl;
-	if(!readFastqIntoNameKeyedRecord(opts.file1,file1r)){
+	if(!readFastqIntoNameKeyedRecord(opts.file1,file1r,opts.minLength)){
 		cerr<<"Failed. Abort"<<endl;
 		return 1;
 	}
 	cerr<<file1r.size()<<" reads read"<<endl;
 	cerr<<"Reading file2 "<<opts.file2<<endl;
-	if(!readFastqIntoNameKeyedRecord(opts.file2,file2r)){
+	if(!readFastqIntoNameKeyedRecord(opts.file2,file2r,opts.minLength)){
 		cerr<<"Failed. Abort"<<endl;
 		return 1;
 	}
@@ -213,11 +228,11 @@ int runFilterReads( filterReads_opts &opts){
 	cerr<<"Second Pass"<<endl;
 	
 	cerr<<"Copying filtered lines from file1 to outfile1"<<endl;
-	copyLines(opts.file1,opts.outfile1,f1linesToOutput);
+	copyLines(opts.file1,opts.outfile1,f1linesToOutput,opts.trimLength);
 	cerr<<readsOut1<<" reads output to "<<opts.outfile1<<endl;
 	
 	cerr<<"Copying filtered lines from file2 to outfile2"<<endl;
-	copyLines(opts.file2,opts.outfile2,f2linesToOutput);
+	copyLines(opts.file2,opts.outfile2,f2linesToOutput,opts.trimLength);
 	cerr<<readsOut2<<" reads output to "<<opts.outfile2<<endl;
 	
 	cerr<<"<Done>"<<endl;
@@ -231,10 +246,16 @@ int runFilterReads( filterReads_opts &opts){
 int main(int argc,char*argv[])
 {
 	
+	//cout<<"num limits "<<numeric_limits<streamoff>::min()<<" "<<numeric_limits<streamoff>::max()<<endl;
+	//cout<<"num limits "<<numeric_limits<int>::min()<<" "<<numeric_limits<int>::max()<<endl;
+	//return 0;
+	
 	vector<string> long_options;
 	//required:
 	long_options.push_back("paired");
-
+	long_options.push_back("min-length=");
+	long_options.push_back("trim-to-length=");
+	
 	map<string,string> optmap;
 	
 	EasyAdvGetOptOut argsFinal=easyAdvGetOpt(argc,argv,"",&long_options);
@@ -265,6 +286,15 @@ int main(int argc,char*argv[])
 	//clustergramOpts.bamfile=getOptValue(optmap,"--target-read-file");
 	
 	opts.pairedReads=hasOpt(optmap,"--paired");
+	opts.trimLength=atoi(getOptValue(optmap,"--trim-to-length","0").c_str());
+	opts.minLength=atoi(getOptValue(optmap,"--min-length","0").c_str()); 
+	
+	
+	if(opts.trimLength>0 && opts.minLength<opts.trimLength){
+		//the effective min length has to be the minimal of trim length.
+		opts.minLength=opts.trimLength;
+	}	
+	
 	
 	if(!opts.pairedReads){
 		cerr<<"currently we only do filtering for paired reads. please use --paired option"<<endl;
